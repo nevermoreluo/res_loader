@@ -16,7 +16,7 @@ class Config:
             "tmp_audio_dir": "tmp_audio",
             "watch_dir": "test_data/",
             "whisper": {
-                "model_size_or_path": "models/faster-whisper-large-v3-turbo-ct2",  # 可选: tiny, base, small, medium, large, 或者模型路径models/faster-whisper-large-v3-turbo-ct2
+                "model_size_or_path": "base",  # 可选: tiny, base, small, medium, large, 或者模型路径models/faster-whisper-large-v3-turbo-ct2
                 "device": "cpu",       # 可选: cpu, cuda
                 "compute_type": "int8" # 可选: int8, float16, float32
             },

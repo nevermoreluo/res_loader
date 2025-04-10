@@ -80,6 +80,7 @@ class FileWatcher:
             'mp4': ResourceType.VIDEO,
             'avi': ResourceType.VIDEO,
             'mkv': ResourceType.VIDEO,
+            'ts': ResourceType.VIDEO,
             'mp3': ResourceType.AUDIO,
             'wav': ResourceType.AUDIO,
             'txt': ResourceType.TEXT,
