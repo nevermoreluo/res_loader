@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 import os
 from res_loader.logger import logger
+import time
 
 class FileUtils:
     @staticmethod
@@ -94,12 +95,48 @@ class FileUtils:
         return os.path.exists(file_path)
     
     @staticmethod
-    def is_write_completed(file_path: str) -> bool:
+    def is_write_completed(file_path: str, check_interval: float = 0.1, max_checks: int = 2) -> bool:
         """
-        判断文件是否写入完成
+        检查文件是否写入完成
+        
+        Args:
+            file_path: 文件路径
+            check_interval: 检查间隔（秒）
+            max_checks: 最大检查次数
+            
+        Returns:
+            bool: 文件是否写入完成
         """
-        return os.access(file_path, os.W_OK)
-    
+        try:
+            file_path = Path(file_path)
+            if not file_path.exists():
+                return False
+                
+            # 获取初始文件大小
+            initial_size = file_path.stat().st_size
+            
+            # 检查文件大小是否稳定
+            for _ in range(max_checks):
+                time.sleep(check_interval)
+                current_size = file_path.stat().st_size
+                
+                # 如果文件大小没有变化，且文件可读，则认为写入完成
+                if current_size == initial_size:
+                    try:
+                        # 尝试打开文件进行读取
+                        with open(file_path, 'rb') as f:
+                            f.read(1)  # 尝试读取一个字节
+                        return True
+                    except IOError:
+                        continue
+                
+                initial_size = current_size
+                
+            return False
+            
+        except Exception as e:
+            logger.error(f"检查文件写入状态失败 {file_path}: {e}")
+            return False
     
     
     

@@ -10,9 +10,8 @@
 #   universal: false
 
 -e file:.
-av==14.2.0
+av==14.3.0
     # via faster-whisper
-    # via res-loader
 certifi==2025.1.31
     # via requests
 charset-normalizer==3.4.1

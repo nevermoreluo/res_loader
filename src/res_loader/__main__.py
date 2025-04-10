@@ -4,7 +4,7 @@ import time
 import threading
 from pathlib import Path
 import concurrent.futures
-from queue import Queue
+import os
 
 from res_loader.config import config
 from res_loader.db import Database, Resource,ResourceStatus,ResourceType
@@ -26,7 +26,13 @@ audio_processor = AudioProcessor(
 video_processor = VideoProcessor(config.get("ffmpeg_path"))
 
 def do_process_video(resource: Resource, session):
-    audio_path = str(Path(resource.path).with_suffix('.mp3'))
+    # 获取音频输出目录
+    audio_dir = config.get("tmp_audio_dir", "tmp_audio")
+    os.makedirs(audio_dir, exist_ok=True)
+    
+    # 生成音频文件路径
+    audio_filename = f"{Path(resource.path).stem}.mp3"
+    audio_path = os.path.join(audio_dir, audio_filename)
 
     if not video_processor.video_to_audio(resource.path, audio_path):
         logger.error(f"视频转换为音频失败: {resource.path}")
@@ -73,30 +79,31 @@ def do_process_resource(resource: Resource, session):
         session.commit()
         return
     # 获取文件类型
-    file_type = resource.type
-    if file_type == ResourceType.TEXT \
-          or file_type == ResourceType.MARKDOWN:
+    resource_type = resource.resource_type
+    if resource_type == ResourceType.TEXT \
+          or resource_type == ResourceType.MARKDOWN:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
             resource.content = content
             resource.status = ResourceStatus.COMPLETED
             session.commit()
-    elif file_type == ResourceType.AUDIO:
+    elif resource_type == ResourceType.AUDIO:
         do_process_audio(resource, session)
-    elif file_type == ResourceType.VIDEO:
+    elif resource_type == ResourceType.VIDEO:
         do_process_video(resource, session)
-    elif file_type == ResourceType.IMAGE \
-        or file_type == ResourceType.PDF \
-        or file_type == ResourceType.WORD \
-        or file_type == ResourceType.PPT \
-        or file_type == ResourceType.EXCEL \
-        or file_type == ResourceType.CSV:
+    elif resource_type == ResourceType.IMAGE \
+        or resource_type == ResourceType.PDF \
+        or resource_type == ResourceType.WORD \
+        or resource_type == ResourceType.PPT \
+        or resource_type == ResourceType.EXCEL \
+        or resource_type == ResourceType.CSV:
         resource.status = ResourceStatus.COMPLETED
         session.commit()
     else:
         resource.status = ResourceStatus.FAILED
         resource.error_message = "尚未支持的文件类型"
         session.commit()
+        logger.error(f"尚未支持的文件类型: {resource.path}")
 
 def process_media_resources(db: Database, stop_event: threading.Event):
     """处理音视频资源的线程函数"""
@@ -105,8 +112,9 @@ def process_media_resources(db: Database, stop_event: threading.Event):
             session = db.Session()
             # 获取待处理的音视频资源
             resources = session.query(Resource).filter(
-                Resource.status == ResourceStatus.PENDING,
-                Resource.type.in_([ResourceType.AUDIO, ResourceType.VIDEO])
+                Resource.status == ResourceStatus.PENDING
+            ).filter(
+                Resource.resource_type.in_([ResourceType.AUDIO, ResourceType.VIDEO])
             ).limit(10).all()
             
             for resource in resources:
@@ -130,11 +138,17 @@ def process_other_resources(db, stop_event: threading.Event, max_workers: int = 
         while not stop_event.is_set():
             try:
                 session = db.Session()
-                # 获取待处理的非音视频资源
+                # 获取待处理的非音视频资源，排除已失败和已完成的资源
                 resources = session.query(Resource).filter(
-                    Resource.status == ResourceStatus.PENDING,
-                    ~Resource.type.in_([ResourceType.AUDIO, ResourceType.VIDEO])
+                    Resource.status == ResourceStatus.PENDING
+                ).filter(
+                    ~Resource.resource_type.in_([ResourceType.AUDIO, ResourceType.VIDEO])
                 ).limit(10).all()
+                
+                if resources:
+                    logger.info(f"发现 {len(resources)} 个待处理资源")
+                    for resource in resources:
+                        logger.info(f"资源信息: id={resource.id}, name={resource.name}, type={resource.resource_type}, path={resource.path}, status={resource.status}")
                 
                 # 提交任务到线程池
                 futures = []
@@ -167,6 +181,17 @@ def main():
         return
     
     db = Database(**db_conf)
+
+
+    session = db.Session()
+    # 获取待处理的非音视频资源，排除已失败和已完成的资源
+    resources = session.query(Resource).limit(10).all()
+    
+    if resources:
+        logger.info(f"发现 {len(resources)} ")
+        for resource in resources:
+            logger.info(f"资源信息: id={resource.id}, name={resource.name}, type={resource.resource_type}, path={resource.path}, status={resource.status}")
+    logger.info("resources end")
     
     # 获取监视目录配置
     watch_dir = config.get("watch_dir", "watch")

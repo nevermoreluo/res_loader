@@ -41,7 +41,7 @@ class Resource(Base):
     
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
-    type = Column(Enum(ResourceType), default=ResourceType.UNKNOWN, nullable=False)
+    resource_type = Column(Enum(ResourceType), default=ResourceType.UNKNOWN, nullable=False)
     path = Column(String(512), default="", nullable=False)
     md5 = Column(String(32), default="", nullable=False)
     content = Column(Text, default="")
@@ -52,9 +52,9 @@ class Resource(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     def audio_path(self) -> Optional[str]:
-        if self.type == ResourceType.AUDIO:
+        if self.resource_type == ResourceType.AUDIO:
             return self.path
-        if self.type == ResourceType.VIDEO:
+        if self.resource_type == ResourceType.VIDEO:
             return self.converted_path
         return None
 
@@ -102,26 +102,63 @@ class Database:
         else:
             raise ValueError(f"不支持的数据库类型: {self.db_type}")
     
-    def add_resource(self, name: str, type: ResourceType, path: str, md5: str, 
-                    converted_path: Optional[str] = None, metadata: Optional[Dict] = None) -> Resource:
-        """添加资源记录"""
+    def add_resource(self, name: str, resource_type: ResourceType, path: str, md5: str, 
+                    converted_path: Optional[str] = None) -> Resource:
+        """
+        添加资源记录。如果path已存在，则更新该记录而不是添加新记录。
+        
+        Args:
+            name: 资源名称
+            resource_type: 资源类型
+            path: 资源路径
+            md5: 资源MD5值
+            converted_path: 转换后的资源路径
+            
+        Returns:
+            Resource: 添加或更新后的资源记录
+            
+        Raises:
+            Exception: 添加或更新失败时抛出异常
+        """
         session = self.Session()
         try:
-            resource = Resource(
-                name=name,
-                type=type,
-                path=path,
-                md5=md5,
-                converted_path=converted_path,
-                status=ResourceStatus.PENDING,
-                metadata=str(metadata) if metadata else None
-            )
-            session.add(resource)
-            session.commit()
-            return resource
+            # 检查是否已存在相同路径的资源
+            existing_resource = session.query(Resource).filter_by(path=path).first()
+            
+            if existing_resource:
+                # 更新现有记录
+                existing_resource.name = name
+                existing_resource.resource_type = resource_type
+                if converted_path:
+                    existing_resource.converted_path = converted_path
+                if md5 and existing_resource.md5 != md5:
+                    # 如果MD5发生变化，重置相关字段
+                    existing_resource.converted_path = ""
+                    existing_resource.content = None
+                    existing_resource.error_message = None
+                    existing_resource.status = ResourceStatus.PENDING
+                existing_resource.md5 = md5
+                session.commit()
+                logger.info(f"更新资源记录: {path}")
+                return existing_resource
+            else:
+                # 添加新记录
+                resource = Resource(
+                    name=name,
+                    resource_type=resource_type,
+                    path=path,
+                    md5=md5,
+                    converted_path=converted_path,
+                    status=ResourceStatus.PENDING
+                )
+                session.add(resource)
+                session.commit()
+                logger.info(f"添加新资源记录: {path}")
+                return resource
+                
         except Exception as e:
             session.rollback()
-            logger.error(f"添加资源记录失败: {e}")
+            logger.error(f"添加/更新资源记录失败: {e}")
             raise
         finally:
             session.close()
@@ -178,30 +215,46 @@ class Database:
         finally:
             session.close()
     
-    def list_resources(self, type: Optional[ResourceType] = None, 
+    def list_resources(self, resource_type: Optional[ResourceType] = None, 
                       status: Optional[ResourceStatus] = None,
                       limit: int = 100, offset: int = 0) -> List[Resource]:
         """列出资源记录"""
         session = self.Session()
         try:
             query = session.query(Resource)
-            if type:
-                query = query.filter_by(type=type)
+            if resource_type:
+                query = query.filter_by(resource_type=resource_type)
             if status:
                 query = query.filter_by(status=status)
             return query.order_by(Resource.created_at.desc()).offset(offset).limit(limit).all()
         finally:
             session.close()
     
-    def get_pending_resources(self, type: Optional[ResourceType] = None, limit: int = 100) -> List[Resource]:
+    def get_pending_resources(self, resource_type: Optional[ResourceType] = None, limit: int = 100) -> List[Resource]:
         """获取待处理的资源"""
-        return self.list_resources(type=type, status=ResourceStatus.PENDING, limit=limit)
+        return self.list_resources(resource_type=resource_type, status=ResourceStatus.PENDING, limit=limit)
     
-    def get_failed_resources(self, type: Optional[ResourceType] = None, limit: int = 100) -> List[Resource]:
+    def get_failed_resources(self, resource_type: Optional[ResourceType] = None, limit: int = 100) -> List[Resource]:
         """获取处理失败的资源"""
-        return self.list_resources(type=type, status=ResourceStatus.FAILED, limit=limit)
+        return self.list_resources(resource_type=resource_type, status=ResourceStatus.FAILED, limit=limit)
     
     def close(self):
         """关闭数据库连接"""
         self.Session.remove()
         self.engine.dispose() 
+
+
+if __name__ == "__main__":
+    db_conf = config.get_db_conf()
+    if not db_conf:
+        logger.error("无法获取数据库配置")
+        exit(1)
+    db_conf["type"] = "sqlite"
+    db_conf["db_path"] = "data/res_loader_test.db"
+    db = Database(**db_conf)
+    db.update_resource(1, status=ResourceStatus.FAILED, error_message="test error")
+    db.add_resource("test", ResourceType.VIDEO, "test.mp4", "1234567890")
+    for resource in db.list_resources():
+        logger.info("resource: %s, %s, %s, %s, %s, %s, %s, %s, %s, %s",resource.id, resource.name, resource.resource_type, resource.path, resource.md5, resource.converted_path, resource.status, resource.error_message, resource.created_at, resource.updated_at)
+    logger.info("ending")
+    db.close()

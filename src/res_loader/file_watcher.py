@@ -42,9 +42,14 @@ class FileWatcher:
     def _process_file(self, file_path: Path) -> None:
         """处理单个文件，添加到数据库或更新状态"""
         try:
+            # 等待文件写入完成
+            if not FileUtils.is_write_completed(str(file_path)):
+                logger.warning(f"文件可能仍在写入中，跳过处理: {file_path}")
+                return
+                
             # 获取文件信息
             file_name = file_path.name
-            file_type = FileUtils.get_file_type(str(file_path))
+            resource_type = FileUtils.get_file_type(str(file_path))
             file_md5 = FileUtils.get_file_md5(str(file_path))
             
             if not file_md5:
@@ -54,24 +59,17 @@ class FileWatcher:
             # 检查文件是否已在数据库中
             existing_resource = self.db.get_resource_by_md5(file_md5)
             
-            if existing_resource:
-                # 更新现有记录
-                self.db.update_resource(
-                    existing_resource.id,
-                    path=str(file_path),
-                    status=ResourceStatus.PENDING
-                )
-                logger.info(f"更新文件记录: {file_path}")
-            else:
+            if not existing_resource:
                 # 添加新记录
-                resource_type = self._get_resource_type(file_type)
+                resource_type_enum = self._get_resource_type(resource_type)
                 self.db.add_resource(
                     name=file_name,
-                    type=resource_type,
+                    resource_type=resource_type_enum,
                     path=str(file_path),
                     md5=file_md5
                 )
                 logger.info(f"添加新文件记录: {file_path}")
+                
         except Exception as e:
             logger.error(f"处理文件失败 {file_path}: {e}")
     
