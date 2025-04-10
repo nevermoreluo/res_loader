@@ -13,6 +13,175 @@ from res_loader.logger import logger
 from res_loader.utils.video import VideoProcessor
 from res_loader.utils.audio import AudioProcessor
 
+
+class ResourceProcessor:
+    def __init__(self, db: Database):
+        self.db = db
+        self._audio_processor: AudioProcessor = None
+        self._video_processor: VideoProcessor = None
+
+    @property
+    def audio_processor(self):
+        if self._audio_processor is None:
+            whisper_conf = config.get("whisper") or {}
+            logger.debug(f"whisper_conf: {whisper_conf}")
+            self._audio_processor = AudioProcessor(
+                model_size_or_path=whisper_conf.get("model_size_or_path", "base"),
+                device=whisper_conf.get("device", "cpu"),
+                compute_type=whisper_conf.get("compute_type", "int8")
+            )
+        return self._audio_processor
+    
+    @property
+    def video_processor(self):
+        if self._video_processor is None:
+            self._video_processor = VideoProcessor(config.get("ffmpeg_path"))
+        return self._video_processor
+
+    def do_process_video(self,resource: Resource, session):
+        # 获取音频输出目录
+        audio_dir = config.get("tmp_audio_dir", "tmp_audio")
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        # 生成音频文件路径
+        audio_filename = f"{Path(resource.path).stem}.mp3"
+        audio_path = os.path.join(audio_dir, audio_filename)
+
+        if not self.video_processor.video_to_audio(resource.path, audio_path):
+            logger.error(f"视频转换为音频失败: {resource.path}")
+            resource.status = ResourceStatus.FAILED
+            session.commit()
+            return
+        resource.converted_path = audio_path
+        self.do_process_audio(resource, session)
+
+    def do_process_audio(self, resource: Resource, session):
+        audio_path = resource.audio_path()
+        if not audio_path:
+            logger.error(f"音频文件不存在: {resource.path}")
+            resource.status = ResourceStatus.FAILED
+            session.commit()
+            return
+        
+        # 使用 Whisper 将音频转换为文本
+        text = self.audio_processor.audio_to_text(audio_path)
+        if text is None:
+            logger.error(f"音频转文本失败: {audio_path}")
+            resource.status = ResourceStatus.FAILED
+            session.commit()
+            return
+        
+        # 保存转换后的文本
+        resource.content = text
+        resource.status = ResourceStatus.PRE_PROCESSED
+        session.commit()
+        logger.info(f"音频转文本成功: {audio_path}")
+
+    def pre_process_resource(self, resource: Resource):
+        session = self.db.Session()
+        logger.info(f"处理加载资源: {resource.path}")
+        # 获取待处理文件
+        file_path = Path(resource.path)
+        if not file_path.exists():
+            logger.error(f"文件不存在: {file_path}")
+            resource.status = ResourceStatus.FAILED
+            session.commit()
+            return
+        if not file_path.is_file():
+            logger.error(f"路径不是文件: {file_path}")
+            resource.status = ResourceStatus.FAILED
+            session.commit()
+            return
+        # 获取文件类型
+        resource_type = resource.resource_type
+        if resource_type == ResourceType.TEXT \
+            or resource_type == ResourceType.MARKDOWN:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                resource.content = content
+                resource.status = ResourceStatus.PRE_PROCESSED
+                session.commit()
+        elif resource_type == ResourceType.AUDIO:
+            self.do_process_audio(resource, session)
+        elif resource_type == ResourceType.VIDEO:
+            self.do_process_video(resource, session)
+        elif resource_type == ResourceType.IMAGE \
+            or resource_type == ResourceType.PDF \
+            or resource_type == ResourceType.WORD \
+            or resource_type == ResourceType.PPT \
+            or resource_type == ResourceType.EXCEL \
+            or resource_type == ResourceType.CSV:
+            resource.status = ResourceStatus.PRE_PROCESSED
+            session.commit()
+        else:
+            resource.status = ResourceStatus.FAILED
+            resource.error_message = "尚未支持的文件类型"
+            session.commit()
+            logger.error(f"尚未支持的文件类型: {resource.path}")
+
+    def run(self):
+        # 创建停止事件
+        stop_event = threading.Event()
+        session = self.db.Session()
+        # 获取待处理的非音视频资源，排除已失败和已完成的资源
+        
+        # 获取监视目录配置
+        watch_dir = config.get("watch_dir", "watch")
+        
+        # 创建文件监视器
+        watcher = FileWatcher(watch_dir, self.db)
+        
+        # 设置信号处理
+        def signal_handler(sig, frame):
+            logger.info("正在停止文件监视器...")
+            watcher.stop()
+            db.close()
+            sys.exit(0)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+
+            # 创建并启动处理线程
+        media_thread = threading.Thread(
+            target=self.process_media_resources,
+            args=(self.db, stop_event),
+            name="MediaProcessor"
+        )
+        other_thread = threading.Thread(
+            target=self.process_other_resources,
+            args=(self.db, stop_event),
+            name="OtherProcessor"
+        )
+        
+        media_thread.daemon = True
+        other_thread.daemon = True
+        
+        media_thread.start()
+        other_thread.start()
+
+        try:
+            # 开始监视
+            watcher.start()
+            logger.info("文件监视器已启动，按 Ctrl+C 停止")
+            
+            # 保持程序运行
+            while True:
+                time.sleep(3)
+        except Exception as e:
+            logger.error(f"发生错误: {e}")
+        finally:
+            stop_event.set()
+            media_thread.join()
+            logger.info("媒体处理线程已停止")
+            other_thread.join()
+            logger.info("其他处理线程已停止")
+            watcher.stop()
+            logger.info("文件监视器已停止")
+            self.db.close()
+            logger.info("数据库已关闭")
+    
+
 # 创建音频处理器实例
 whisper_conf = config.get("whisper") or {}
 logger.debug(f"whisper_conf: {whisper_conf}")
@@ -60,7 +229,7 @@ def do_process_audio(resource: Resource, session):
     
     # 保存转换后的文本
     resource.content = text
-    resource.status = ResourceStatus.COMPLETED
+    resource.status = ResourceStatus.PRE_PROCESSED
     session.commit()
     logger.info(f"音频转文本成功: {audio_path}")
 
@@ -85,7 +254,7 @@ def do_process_resource(resource: Resource, session):
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
             resource.content = content
-            resource.status = ResourceStatus.COMPLETED
+            resource.status = ResourceStatus.PRE_PROCESSED
             session.commit()
     elif resource_type == ResourceType.AUDIO:
         do_process_audio(resource, session)
@@ -97,7 +266,7 @@ def do_process_resource(resource: Resource, session):
         or resource_type == ResourceType.PPT \
         or resource_type == ResourceType.EXCEL \
         or resource_type == ResourceType.CSV:
-        resource.status = ResourceStatus.COMPLETED
+        resource.status = ResourceStatus.PRE_PROCESSED
         session.commit()
     else:
         resource.status = ResourceStatus.FAILED

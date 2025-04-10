@@ -27,11 +27,10 @@ class ResourceType(enum.Enum):
 # 定义资源状态枚举
 class ResourceStatus(enum.Enum):
     PENDING = "pending"      # 等待处理
-    PROCESSING = "processing"  # 处理中
-    COMPLETED = "completed"  # 处理完成
+    PRE_PROCESSED = "pre_processed"  # 预处理完成
     FAILED = "failed"       # 处理失败
     DELETED = "deleted"     # 已删除
-    UPLOADED = "uploaded"   # 已上传
+    COMPLETED = "completed"   # 已处理
 
 Base = declarative_base()
 
