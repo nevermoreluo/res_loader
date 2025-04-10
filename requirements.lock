@@ -10,8 +10,9 @@
 #   universal: false
 
 -e file:.
-av==14.3.0
+av==14.2.0
     # via faster-whisper
+    # via res-loader
 certifi==2025.1.31
     # via requests
 charset-normalizer==3.4.1
@@ -74,3 +75,5 @@ typing-extensions==4.13.1
     # via sqlalchemy
 urllib3==2.3.0
     # via requests
+watchdog==6.0.0
+    # via res-loader

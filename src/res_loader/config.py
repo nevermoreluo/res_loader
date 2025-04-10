@@ -7,12 +7,18 @@ from res_loader.logger import logger
 
 class Config:
     def __init__(self, config_path:str = "config.json"):
-        self.config_path = config_path
+        self.config_path: str = config_path
         self.config: Dict[str, Any] = {}
-        self.default_config = {
+        self.default_config: dict = {
             "ffmpeg_path": "bin/ffmpeg.exe",
             "temp_dir": "temp",
             "output_dir": "output",
+            "watch_dir": "test_data/",
+            "whisper": {
+                "model_size_or_path": "models/faster-whisper-large-v3-turbo-ct2",  # 可选: tiny, base, small, medium, large
+                "device": "cpu",       # 可选: cpu, cuda
+                "compute_type": "int8" # 可选: int8, float16, float32
+            },
             "log": {
                 "dir": "logs",
                 "level": "INFO",
@@ -46,6 +52,7 @@ class Config:
                 loaded_config = json.load(f) or {}
                 # 合并默认配置和加载的配置
                 self.config = {**self.default_config, **loaded_config}
+            logger.debug(f"加载配置文件成功: {self.config_path}")
         except Exception as e:
             logger.error(f"加载配置文件失败: {e}")
             self.config = self.default_config.copy()
@@ -70,5 +77,23 @@ class Config:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
         except Exception as e:
             logger.error(f"保存配置文件失败: {e}") 
+
+    def get_db_conf(self) -> dict:
+        """获取数据库配置
+        
+        Returns:
+            dict: 数据库配置字典，包含数据库类型和对应的连接参数
+        """
+        db_conf: dict = self.get("database", {})
+        db_type: str = db_conf.get("type") or "sqlite"
+        
+        if db_type not in ["sqlite", "mysql"]:
+            logger.error(f"不支持的数据库类型: {db_type}, 回退到sqlite")
+            db_type = "sqlite"
+            
+        return {
+            "type": db_type,
+            **db_conf.get(db_type, {})
+        }
 
 config = Config()

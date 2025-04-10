@@ -14,6 +14,7 @@ from res_loader.config import config
 class ResourceType(enum.Enum):
     VIDEO = "video"
     AUDIO = "audio"
+    IMAGE = "image"
     TEXT = "text"
     PDF = "pdf"
     MARKDOWN = "markdown"
@@ -29,6 +30,8 @@ class ResourceStatus(enum.Enum):
     PROCESSING = "processing"  # 处理中
     COMPLETED = "completed"  # 处理完成
     FAILED = "failed"       # 处理失败
+    DELETED = "deleted"     # 已删除
+    UPLOADED = "uploaded"   # 已上传
 
 Base = declarative_base()
 
@@ -41,12 +44,20 @@ class Resource(Base):
     type = Column(Enum(ResourceType), default=ResourceType.UNKNOWN, nullable=False)
     path = Column(String(512), default="", nullable=False)
     md5 = Column(String(32), default="", nullable=False)
+    content = Column(Text, default="")
     converted_path = Column(String(512))
     status = Column(Enum(ResourceStatus), default=ResourceStatus.PENDING, nullable=False)
     error_message = Column(Text)  # 存储处理失败时的错误信息
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-    metadata = Column(Text)  # 存储额外的元数据，JSON格式
+
+    def audio_path(self) -> Optional[str]:
+        if self.type == ResourceType.AUDIO:
+            return self.path
+        if self.type == ResourceType.VIDEO:
+            return self.converted_path
+        return None
+
 
 class Database:
     def __init__(self, db_type: str = "sqlite", **kwargs):

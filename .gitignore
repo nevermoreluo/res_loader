@@ -7,6 +7,11 @@ wheels/
 *.egg-info
 
 logs/
+models/
+test_data/
+*.db
+
+config.json
 
 # venv
 .venv

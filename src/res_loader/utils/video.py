@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 import os
 from res_loader.logger import logger
+
 class VideoProcessor:
     def __init__(self, ffmpeg_path: str):
         """
@@ -51,7 +52,7 @@ class VideoProcessor:
         try:
             # 执行ffmpeg命令
             subprocess.run(cmd, check=True, capture_output=True)
-            return output_path
+            return True
         except subprocess.CalledProcessError as e:
             logger.error(f"视频转换失败: {e.stderr.decode()}")
             return False

@@ -93,6 +93,15 @@ class FileUtils:
         """
         return os.path.exists(file_path)
     
+    @staticmethod
+    def is_write_completed(file_path: str) -> bool:
+        """
+        判断文件是否写入完成
+        """
+        return os.access(file_path, os.W_OK)
+    
+    
+    
     
 
 
